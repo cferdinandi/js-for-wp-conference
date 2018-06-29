@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>API Secrets</title>
+	<style type="text/css">
+		/**
+		 * Add box sizing to everything
+		 * @link http://www.paulirish.com/2012/box-sizing-border-box-ftw/
+		 */
+		*,
+		*:before,
+		*:after {
+			box-sizing: border-box;
+		}
+
+		/**
+		 * Layout
+		 */
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+			font-size: 112.5%;
+			margin-left: auto;
+			margin-right: auto;
+			max-width: 40em;
+			width: 88%;
+		}
+
+
+		/**
+		 * Forms
+		 */
+		label {
+			display: block;
+			font-weight: bold;
+			margin-bottom: 0.25em;
+		}
+
+		input {
+			display: block;
+			font: inherit;
+			margin-bottom: 1em;
+			width: 100%;
+		}
+
+		button {
+			font: inherit;
+		}
+
+		.honeypot {
+			display: none;
+			visibility: hidden;
+		}
+	</style>
+</head>
+<body>
+	<h1>Join My Email List</h1>
+
+	<form action="https://gomakethings.us1.list-manage.com/subscribe/post?u=f2d244c0df42a0431bd08ddea&amp;id=aeaa9dd034" method="post" name="mc-embedded-subscribe-form" id="mailchimp-form" novalidate>
+		<div class="row">
+			<div class="grid-two-thirds">
+				<div class="honeypot">
+					<label for="name">If you're human, leave this blank</label>
+					<input type="text" name="name" id="name" value="">
+				</div>
+				<div>
+					<label class="screen-reader" for="mailchimp-email">Email Address</label>
+					<input type="email" name="email" id="mailchimp-email" placeholder="Your email address..." required>
+				</div>
+				<input type="hidden" name="some_random_string" value="some_random_value">
+			</div>
+			<div class="grid-third">
+				<button data-processing="Signing Up..." data-ready="Get Daily Developer Tips" class="btn btn-block" type="submit">Get Daily Developer Tips</button>
+			</div>
+		</div>
+		<div id="mc-status"></div>
+	</form>
+
+	<script src="main.js"></script>
+	<script>
+		// Mailchimp form
+		if (document.querySelector('#mailchimp-form')) {
+			mailchimp();
+		}
+	</script>
+</body>
+</html>

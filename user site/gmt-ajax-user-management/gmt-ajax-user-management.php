@@ -1,0 +1,679 @@
+<?php
+
+/**
+ * Plugin Name: GMT WP AJAX User Management
+ * Description: Handle some basic user management functions via WP AJAX.
+ * Version: 0.1.0
+ * Author: Chris Ferdinandi
+ * Author URI: http://gomakethings.com
+ * License: GPLv3
+ *
+ * Notes and references:
+ * - https://codex.wordpress.org/Function_Reference/wp_send_json
+ * - https://codex.wordpress.org/AJAX_in_Plugins
+ * - https://www.smashingmagazine.com/2011/10/how-to-use-ajax-in-wordpress/
+ */
+
+
+	//
+	// AJAX Methods
+	//
+
+	/**
+	 * Check if the user is logged in
+	 */
+	function gmt_ajax_users_is_logged_in () {
+
+		// Bail if not an Ajax request
+		if (empty($_SERVER['HTTP_X_REQUESTED_WITH']) || strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) !== 'xmlhttprequest') {
+			header('Location: ' . $_SERVER['HTTP_REFERER']);
+			return;
+		}
+
+		// If the user is not logged in
+		if (!is_user_logged_in()) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'Not logged in.'
+			));
+		}
+
+		// Get the current user's email
+		$user = wp_get_current_user();
+		wp_send_json(array(
+			'code' => 200,
+			'status' => 'success',
+			'data' => array(
+				'email' => $user->user_email
+			)
+		));
+
+	}
+	add_action('wp_ajax_gmt_ajax_users_is_logged_in', 'gmt_ajax_users_is_logged_in');
+	add_action('wp_ajax_nopriv_gmt_ajax_users_is_logged_in', 'gmt_ajax_users_is_logged_in');
+
+
+	/**
+	 * Log the user in via an Ajax call
+	 */
+	function gmt_ajax_users_login () {
+
+		// Bail if not an Ajax request
+		if (empty($_SERVER['HTTP_X_REQUESTED_WITH']) || strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) !== 'xmlhttprequest') {
+			header('Location: ' . $_SERVER['HTTP_REFERER']);
+			return;
+		}
+
+		// Make sure user isn't already logged in
+		if (is_user_logged_in()) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'You\'re already logged in.'
+			));
+		}
+
+		// Make sure account has been validated
+		$user = get_user_by('email', $_POST['username']);
+		if (!empty(get_user_meta($user->ID, 'user_validation_key', true))) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'Please validate your account using the link in the email that was sent to you. If you never received a validation link, please email the site admin.'
+			));
+		}
+
+		// Authenticate User
+		$credentials = array(
+			'user_login' => $_POST['username'],
+			'user_password' => $_POST['password'],
+			'remember' => true,
+		);
+		$login = wp_signon($credentials);
+
+		// If authentication fails
+		if (is_wp_error($login)) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'The username or password you provided is not valid.'
+			));
+		}
+
+		// Send success message
+		wp_send_json(array(
+			'code' => 200,
+			'status' => 'success',
+			'message' => 'The user is logged in.'
+		));
+
+	}
+	add_action('wp_ajax_gmt_ajax_users_login', 'gmt_ajax_users_login');
+	add_action('wp_ajax_nopriv_gmt_ajax_users_login', 'gmt_ajax_users_login');
+
+
+	/**
+	 * Log out the current user via an Ajax request
+	 */
+	function gmt_ajax_users_logout () {
+
+		// Bail if not an Ajax request
+		if (empty($_SERVER['HTTP_X_REQUESTED_WITH']) || strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) !== 'xmlhttprequest') {
+			header('Location: ' . $_SERVER['HTTP_REFERER']);
+			return;
+		}
+
+		// Log the user out
+		wp_logout();
+
+		// Send confirmation
+		wp_send_json(array(
+			'code' => 200,
+			'status' => 'success',
+			'message' => 'You have been logged out.'
+		));
+
+	}
+	add_action('wp_ajax_gmt_ajax_users_logout', 'gmt_ajax_users_logout');
+	add_action('wp_ajax_nopriv_gmt_ajax_users_logout', 'gmt_ajax_users_logout');
+
+
+	/**
+	 * Create an account for a new user
+	 */
+	function gmt_ajax_users_create_user () {
+
+		// Bail if not an Ajax request
+		if (empty($_SERVER['HTTP_X_REQUESTED_WITH']) || strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) !== 'xmlhttprequest') {
+			header('Location: ' . $_SERVER['HTTP_REFERER']);
+			return;
+		}
+
+		// Bail if user is already logged in
+		if (is_user_logged_in()) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'You\'re already logged in.'
+			));
+		}
+
+		// If username already exists and is validated
+		if (username_exists($_POST['username'])) {
+
+			// Get validation key
+			$user = get_user_by('email', $_POST['username']);
+			$validation = get_user_meta($user->ID, 'user_validation_key', true);
+
+			// If not awaiting validation, throw an error
+			if (empty($validation)) {
+				wp_send_json(array(
+					'code' => 401,
+					'status' => 'failed',
+					'message' => 'An account already exists for this email address. If you need to reset your password, please email the site admin.'
+				));
+			}
+
+		}
+
+		// Enforce password security
+		$pw_length = getenv('MIN_PASSWORD_LENGTH');
+		$pw_length = $pw_length ? intval($pw_length) : 8;
+		if (strlen($_POST['password']) < $pw_length) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'Please use a password that\'s at least ' . $pw_length . ' characters long.'
+			));
+		}
+
+		// Create new user
+		$user = wp_create_user(sanitize_email($_POST['username']), $_POST['password'], sanitize_email($_POST['username']));
+
+		// If account creation fails
+		if (is_wp_error($user)) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'Something went wrong. Please try again. If you continue to see this message, please email the site admin.'
+			));
+		}
+
+		// Add validation key
+		$validation_key =  wp_generate_password(48, false);
+		update_user_meta($user, 'user_validation_key', array(
+			'key' => $validation_key,
+			'expires' => time() + (60 * 60 * 48)
+		));
+
+		// Send validation email
+		gmt_ajax_users_send_validation_email($_POST['username'], $validation_key);
+
+		wp_send_json(array(
+			'code' => 200,
+			'status' => 'success',
+			'message' => 'Your account has been created! You were just sent a verification email. Please validate your account within the next 48 hours to complete your registration. If you don\'t receive an email, please email the site admin.'
+		));
+
+	}
+	add_action('wp_ajax_gmt_ajax_users_create_user', 'gmt_ajax_users_create_user');
+	add_action('wp_ajax_nopriv_gmt_ajax_users_create_user', 'gmt_ajax_users_create_user');
+
+
+	/**
+	 * Validate a new user account
+	 */
+	function gmt_ajax_users_validate_new_account () {
+
+		// Bail if not an Ajax request
+		if (empty($_SERVER['HTTP_X_REQUESTED_WITH']) || strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) !== 'xmlhttprequest') {
+			header('Location: ' . $_SERVER['HTTP_REFERER']);
+			return;
+		}
+
+		// Bail if user is already logged in
+		if (is_user_logged_in()) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'You\'re already logged in.'
+			));
+		}
+
+		// Variables
+		$user = get_user_by('email', $_POST['username']);
+		$validation = get_user_meta($user->ID, 'user_validation_key', true);
+		$signup_url = getenv('SIGNUP_URL');
+
+		// If user exists but there's no validation key, let them know account already verified
+		if (!empty($user) && empty($validation)) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'This account has already been validated. <a href="/">Please login</a> to access your content. If you don\'t know your password or feel this is an error, please email the site admin.'
+			));
+		}
+
+		// If validation fails
+		if (empty($user) || empty($validation) || strcmp($_POST['key'], $validation['key']) !== 0) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'This validation link is not valid. If you feel this was in error, please email the site admin.'
+			));
+		}
+
+		// If validation key has expired, ask them to try again
+		if (time() > $validation['expires']) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'This validation link has expired. Please <a href="' . $signup_url . '">try creating an account again</a>. If you feel this was in error, please email the site admin.'
+			));
+		}
+
+		// Remove the validation key
+		delete_user_meta($user->ID, 'user_validation_key');
+
+		// Send success data
+		wp_send_json(array(
+			'code' => 200,
+			'status' => 'success',
+			'message' => 'Your account was successfully validated. <a href="/">Please login</a> to access your content.'
+		));
+
+	};
+	add_action('wp_ajax_gmt_ajax_users_validate_new_account', 'gmt_ajax_users_validate_new_account');
+	add_action('wp_ajax_nopriv_gmt_ajax_users_validate_new_account', 'gmt_ajax_users_validate_new_account');
+
+
+	/**
+	 * Update the user's password
+	 */
+	function gmt_ajax_users_change_password () {
+
+		// Bail if not an Ajax request
+		if (empty($_SERVER['HTTP_X_REQUESTED_WITH']) || strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) !== 'xmlhttprequest') {
+			header('Location: ' . $_SERVER['HTTP_REFERER']);
+			return;
+		}
+
+		// Bail if user is not logged in
+		if (!is_user_logged_in()) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'You need to be logged in to change your password.'
+			));
+		}
+
+		// Get the current user
+		$current_user = wp_get_current_user();
+
+		// Check that current password is supplied
+		if (empty($_POST['current_password'])) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'Please enter your current password.'
+			));
+		}
+
+		// Check that new password is provided
+		if (empty($_POST['new_password'])) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'Please enter a new password.'
+			));
+		}
+
+		// Validate and authenticate current password
+		if (!wp_check_password($_POST['current_password'], $current_user->user_pass, $current_user->ID)) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'The password you provided is incorrect.'
+			));
+		}
+
+		// Enforce password requirements
+		$pw_length = getenv('MIN_PASSWORD_LENGTH');
+		$pw_length = $pw_length ? intval($pw_length) : 8;
+		if (strlen($_POST['new_password']) < $pw_length) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'Please enter a new password that\'s at least ' . $pw_length . ' characters long.'
+			));
+		}
+
+		// Update the password
+		$update = wp_update_user(array('ID' => $current_user->ID, 'user_pass' => $_POST['new_password']));
+
+		// If update fails
+		if (is_wp_error($update)) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'Something went wrong. Please try again. If you continue to see this message, please email the site admin.'
+			));
+		}
+
+		// Success!
+		wp_send_json(array(
+			'code' => 200,
+			'status' => 'success',
+			'message' => 'Your password has been updated.'
+		));
+
+	}
+	add_action('wp_ajax_gmt_ajax_users_change_password', 'gmt_ajax_users_change_password');
+	add_action('wp_ajax_nopriv_gmt_ajax_users_change_password', 'gmt_ajax_users_change_password');
+
+
+	/**
+	 * Send a "lost password" reset email
+	 */
+	function gmt_ajax_users_lost_password () {
+
+		// Bail if not an Ajax request
+		if (empty($_SERVER['HTTP_X_REQUESTED_WITH']) || strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) !== 'xmlhttprequest') {
+			header('Location: ' . $_SERVER['HTTP_REFERER']);
+			return;
+		}
+
+		// Bail if user is already logged in
+		if (is_user_logged_in()) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'You\'re already logged in.'
+			));
+		}
+
+		// Make sure the user exists
+		$user = get_user_by('email', $_POST['username']);
+		if (empty($user)) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'Please enter the email address associated with your account. If you don\'t remember what it is, please email the site admin.'
+			));
+		}
+
+		// Add reset validation key
+		$reset_key =  wp_generate_password(48, false);
+		update_user_meta($user->ID, 'password_reset_key', array(
+			'key' => $reset_key,
+			'expires' => time() + (60 * 60 * 48)
+		));
+
+		// Send reset email
+		gmt_ajax_users_send_pw_reset_email($_POST['username'], $reset_key);
+
+		wp_send_json(array(
+			'code' => 200,
+			'status' => 'success',
+			'message' => 'A link to reset your password has been sent to ' . $_POST['username'] . '. Please reset your password within the next 48 hours. If you don\'t receive an email, please email the site admin.'
+		));
+
+	}
+	add_action('wp_ajax_gmt_ajax_users_lost_password', 'gmt_ajax_users_lost_password');
+	add_action('wp_ajax_nopriv_gmt_ajax_users_lost_password', 'gmt_ajax_users_lost_password');
+
+
+	/**
+	 * Check if the provided reset key is valid
+	 */
+	function gmt_ajax_users_is_reset_key_valid () {
+
+		// Bail if not an Ajax request
+		if (empty($_SERVER['HTTP_X_REQUESTED_WITH']) || strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) !== 'xmlhttprequest') {
+			header('Location: ' . $_SERVER['HTTP_REFERER']);
+			return;
+		}
+
+		// Bail if user is already logged in
+		if (is_user_logged_in()) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'You\'re already logged in.'
+			));
+		}
+
+		// Variables
+		$user = get_user_by('email', $_POST['username']);
+		$reset_key = get_user_meta($user->ID, 'password_reset_key', true);
+
+		// If user exists but there's no reset key, or the reset key has expired, have the user try again
+		if (empty($user) || empty($reset_key) || strcmp($_POST['key'], $reset_key['key']) !== 0) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'This password reset link is no longer valid. Please try again. If you keep getting this message, please email the site admin.'
+			));
+		}
+
+		// If reset key has expired, ask them to try again
+		if (time() > $reset_key['expires']) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'This password reset link has expired. Please request a new one. If you feel this was in error, please email the site admin.'
+			));
+		}
+
+		// Otherwise, reset key is valid
+		wp_send_json(array(
+			'code' => 200,
+			'status' => 'success'
+		));
+
+	}
+	add_action('wp_ajax_gmt_ajax_users_is_reset_key_valid', 'gmt_ajax_users_is_reset_key_valid');
+	add_action('wp_ajax_nopriv_gmt_ajax_users_is_reset_key_valid', 'gmt_ajax_users_is_reset_key_valid');
+
+
+	/**
+	 * Reset a user's password
+	 */
+	function gmt_ajax_users_reset_password () {
+
+		// Bail if not an Ajax request
+		if (empty($_SERVER['HTTP_X_REQUESTED_WITH']) || strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) !== 'xmlhttprequest') {
+			header('Location: ' . $_SERVER['HTTP_REFERER']);
+			return;
+		}
+
+		// Bail if user is already logged in
+		if (is_user_logged_in()) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'You\'re already logged in.'
+			));
+		}
+
+		// Variables
+		$user = get_user_by('email', $_POST['username']);
+		$reset_key = get_user_meta($user->ID, 'password_reset_key', true);
+		$reset_pw_url = getenv('RESET_PW_URL');
+		$frontend_url = getenv('FRONTEND_URL');
+
+		// If user exists but there's no reset key, or the reset key has expired, have the user try again
+		if (empty($user) || empty($reset_key) || strcmp($_POST['key'], $reset_key['key']) !== 0) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'This password reset link is no longer valid. Please try again. If you keep getting this message, please email the site admin.'
+			));
+		}
+
+		// If reset key has expired, ask them to try again
+		if (time() > $reset_key['expires']) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'This password reset link has expired. <a href="' . $reset_pw_url . '">Please request a new one.</a> If you feel this was in error, please email the site admin.'
+			));
+		}
+
+		// Check that password is supplied
+		if (empty($_POST['password'])) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'Please enter a new password.'
+			));
+		}
+
+		// Enforce password requirements
+		$pw_length = getenv('MIN_PASSWORD_LENGTH');
+		$pw_length = $pw_length ? intval($pw_length) : 8;
+		if (strlen($_POST['password']) < $pw_length) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'Please enter a new password that\'s at least ' . $pw_length . ' characters long.'
+			));
+		}
+
+		// Update the password
+		$update = wp_update_user(array('ID' => $user->ID, 'user_pass' => $_POST['password']));
+
+		// If update fails
+		if (is_wp_error($update)) {
+			wp_send_json(array(
+				'code' => 401,
+				'status' => 'failed',
+				'message' => 'Something went wrong. Please try again. If you continue to see this message, please email the site admin.'
+			));
+		}
+
+		// Remove the validation key
+		delete_user_meta($user->ID, 'password_reset_key');
+
+		// Authenticate User
+		$credentials = array(
+			'user_login' => $_POST['username'],
+			'user_password' => $_POST['password'],
+			'remember' => true,
+		);
+		$login = wp_signon($credentials);
+
+		// If authentication fails
+		if (is_wp_error($login)) {
+			wp_send_json(array(
+				'code' => 205,
+				'status' => 'success',
+				'message' => 'Your password was successfully reset.' . (empty($frontend_url) ? '' : ' <a href="' . $frontend_url . '">Sign in with your new password</a> to view your content.')
+			));
+		}
+
+		// Send success data
+		wp_send_json(array(
+			'code' => 200,
+			'status' => 'success',
+			'message' => 'Your password was successfully reset.' . (empty($frontend_url) ? '' : ' <a href="' . $frontend_url . '">Click here to view your content.</a>')
+		));
+
+	}
+	add_action('wp_ajax_gmt_ajax_users_reset_password', 'gmt_ajax_users_reset_password');
+	add_action('wp_ajax_nopriv_gmt_ajax_users_reset_password', 'gmt_ajax_users_reset_password');
+
+
+
+	//
+	// Helper Methods
+	//
+
+
+	/**
+	 * Get the site domain and remove the www.
+	 * @return string The site domain
+	 */
+	function gmt_ajax_users_get_site_domain () {
+		$sitename = strtolower( $_SERVER['SERVER_NAME'] );
+		if ( substr( $sitename, 0, 4 ) == 'www.' ) {
+			$sitename = substr( $sitename, 4 );
+		}
+		return $sitename;
+	}
+
+
+	/**
+	 * Send validation email to a new user
+	 * @param  string $email The new user's email
+	 * @param  string $key   The new user's validation key
+	 */
+	function gmt_ajax_users_send_validation_email ($email, $key) {
+
+		// Variables
+		$validate_url = getenv('VALIDATE_URL');
+		$site_name = get_bloginfo('name');
+		$domain = gmt_ajax_users_get_site_domain();
+		$headers = 'From: ' . $site_name . ' <donotreply@' . $domain . '>' . "\r\n";
+		$subject = 'Validate your new account at ' . $site_name;
+		$message = 'Please click the link below to validate your new account at ' . $site_name . '. If you did not try to create an account at ' . $site_name . ', ignore this email and nothing will happen.' . "\r\n\r\n" . $validate_url . '?email=' . $email . '&key=' . $key;
+
+		// Send email
+		@wp_mail(sanitize_email($email), $subject, $message, $headers);
+
+	}
+
+
+	/**
+	 * Send password reset email to user
+	 * @param  string $email The user's email
+	 * @param  string $key   The reset validation key
+	 */
+	function gmt_ajax_users_send_pw_reset_email ($email, $key) {
+
+		// Variables
+		$reset_pw_url = getenv('RESET_PW_URL');
+		$site_name = get_bloginfo('name');
+		$domain = gmt_ajax_users_get_site_domain();
+		$headers = 'From: ' . $site_name . ' <donotreply@' . $domain . '>' . "\r\n";
+		$subject = 'Reset your password for ' . $site_name;
+		$message = 'Please click the link below to reset your password for ' . $site_name . '. If you did not try to reset your password for ' . $site_name . ', ignore this email and nothing will happen.' . "\r\n\r\n" . $reset_pw_url . '?email=' . $email . '&key=' . $key;
+
+		// Send email
+		@wp_mail(sanitize_email($email), $subject, $message, $headers);
+
+	}
+
+
+	/**
+	 * Disable Notifications
+	 * @todo  make these configurable with environment variables
+	 */
+
+	// Disable default new user admin notifications
+	if ( !function_exists( 'wp_new_user_notification' ) ) {
+		function wp_new_user_notification() {}
+	}
+
+	// Disable user password reset notification to admin
+	if ( ! function_exists( 'wp_password_change_notification' ) ) {
+		function wp_password_change_notification( $user ) {
+			return;
+		}
+	}
+
+	// Disable password change notification to the user
+	add_filter( 'send_email_change_email', '__return_false' );
+
+
+	/**
+	 * Redirect users away from the front end
+	 */
+	function gmt_ajax_users_redirect_from_front_end () {
+		$url = getenv('FRONTEND_URL');
+		if (is_admin() || empty($url) || $GLOBALS['pagenow'] === 'wp-login.php') return;
+		wp_redirect($url);
+		exit;
+	}
+	add_action('init', 'gmt_ajax_users_redirect_from_front_end');
